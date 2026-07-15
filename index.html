@@ -70,6 +70,19 @@
   }
   .lobby-card input[type="text"]:focus { border-color: var(--p1); }
 
+  .lobby-card select {
+    width: 100%;
+    background: var(--card-2);
+    border: 1px solid #33335a;
+    border-radius: 10px;
+    padding: 12px;
+    color: var(--text);
+    font-size: 1rem;
+    outline: none;
+    margin-bottom: 16px;
+  }
+  .lobby-card select:focus { border-color: var(--p1); }
+
   .lobby-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
   .lobby-tabs button {
     flex: 1;
@@ -402,6 +415,14 @@
 
       <div id="create-panel">
         <p>Start a new game and share the room code with your partner.</p>
+        <label for="rounds-select">Number of rounds</label>
+        <select id="rounds-select">
+          <option value="5">5 rounds</option>
+          <option value="10" selected>10 rounds</option>
+          <option value="15">15 rounds</option>
+          <option value="20">20 rounds</option>
+          <option value="25">25 rounds</option>
+        </select>
         <button class="primary-btn" id="create-room-btn">Create room</button>
       </div>
 
@@ -444,7 +465,7 @@
     </div>
 
     <div class="round-bar">
-      <span id="round-label">Round 1 / 25</span>
+      <span id="round-label">Round 1 / 10</span>
       <div class="progress"><div class="progress-fill" id="progress-fill"></div></div>
       <span id="points-label">100 pts</span>
     </div>
@@ -633,7 +654,6 @@
   };
 
   const NAT_CODES = Object.keys(COUNTRIES);
-  const TOTAL_ROUNDS = 25;
   const POINTS_BY_LEVEL = [100, 80, 60, 40, 20];
   const ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const CLUE_INTERVAL_MS = 15000;
@@ -660,6 +680,7 @@
   let resolvedThisRound = { p1: null, p2: null }; // {pts, clueLevel} once a player has answered correctly this round
   let countryBag = [];
   let lastNat = null;
+  let totalRounds = 10;
 
   // ── screens ──
   function showScreen(name) {
@@ -700,6 +721,7 @@
     myKey = "p1";
     oppKey = "p2";
     names.p1 = getLobbyName();
+    totalRounds = parseInt(el("rounds-select").value, 10) || 10;
     enterRoom();
   });
 
@@ -933,6 +955,7 @@
   // ── round flow (host drives round_start / clue_reveal / next round; either device can resolve on a correct guess) ──
   function applyRoundStart(data, fromRemote) {
     round = data.round;
+    totalRounds = data.totalRounds || totalRounds;
     clueLevel = 0;
     currentCountry = COUNTRIES[data.nat];
     roundActive = true;
@@ -944,8 +967,8 @@
     el("waiting-next-note").classList.add("hidden");
     el("guess-input").value = "";
 
-    el("round-label").textContent = `Round ${round} / ${TOTAL_ROUNDS}`;
-    el("progress-fill").style.width = `${((round - 1) / TOTAL_ROUNDS) * 100}%`;
+    el("round-label").textContent = `Round ${round} / ${totalRounds}`;
+    el("progress-fill").style.width = `${((round - 1) / totalRounds) * 100}%`;
 
     if (data.photoUrl) {
       el("photo-frame").innerHTML = `<img src="${data.photoUrl}" alt="Mystery person" />`;
@@ -962,7 +985,7 @@
   async function startRound() {
     round++;
     const { nat, photoUrl } = await fetchPerson();
-    const data = { round, nat, photoUrl };
+    const data = { round, nat, photoUrl, totalRounds };
     applyRoundStart(data, false);
     sendMsg("round_start", data);
   }
@@ -1024,7 +1047,7 @@
     updatePointsUI();
     el("timer-label").textContent = "";
 
-    if (round >= TOTAL_ROUNDS) {
+    if (round >= totalRounds) {
       if (myRole === "host") {
         el("next-btn").textContent = "See final results 🏁";
         el("next-btn").classList.remove("hidden");
@@ -1059,7 +1082,7 @@
 
   el("next-btn").addEventListener("click", () => {
     if (myRole !== "host") return;
-    if (round >= TOTAL_ROUNDS) {
+    if (round >= totalRounds) {
       showFinal();
     } else {
       startRound();
