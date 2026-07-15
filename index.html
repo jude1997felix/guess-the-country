@@ -658,6 +658,8 @@
   let roundStartAt = 0;
   let timerInterval = null;
   let resolvedThisRound = { p1: null, p2: null }; // {pts, clueLevel} once a player has answered correctly this round
+  let countryBag = [];
+  let lastNat = null;
 
   // ── screens ──
   function showScreen(name) {
@@ -834,8 +836,30 @@
     return g === normalize(currentCountry.name) || currentCountry.aliases.includes(g);
   }
 
+  function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // Deals through all countries in shuffled order before repeating any, instead of
+  // picking independently each round (which can clump the same country together).
+  function nextNatCode() {
+    if (countryBag.length === 0) {
+      countryBag = shuffle(NAT_CODES);
+      if (lastNat && countryBag[countryBag.length - 1] === lastNat && countryBag.length > 1) {
+        [countryBag[countryBag.length - 1], countryBag[0]] = [countryBag[0], countryBag[countryBag.length - 1]];
+      }
+    }
+    lastNat = countryBag.pop();
+    return lastNat;
+  }
+
   async function fetchPerson() {
-    const nat = NAT_CODES[Math.floor(Math.random() * NAT_CODES.length)];
+    const nat = nextNatCode();
     try {
       const res = await fetch(`https://randomuser.me/api/?nat=${nat}&noinfo`);
       const data = await res.json();
@@ -1062,6 +1086,8 @@
     currentCountry = null;
     roundActive = false;
     resolvedThisRound = { p1: null, p2: null };
+    countryBag = [];
+    lastNat = null;
     gameStarted = false;
     myRole = null; myKey = null; oppKey = null; roomCode = null;
     names = { p1: "Player 1", p2: "Player 2" };
