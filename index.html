@@ -278,6 +278,14 @@
     font-style: italic;
   }
 
+  .timer-label {
+    text-align: center;
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 0.85rem;
+    margin-bottom: 18px;
+  }
+
   .guess-box {
     background: var(--card);
     border-radius: 14px;
@@ -448,9 +456,7 @@
 
     <div class="clues" id="clues"></div>
 
-    <button class="reveal-btn hidden" id="reveal-btn">Reveal next clue 🔍</button>
-    <button class="reveal-btn hidden" id="giveup-btn">Nobody's got it — reveal answer 🙈</button>
-    <p class="host-note hidden" id="host-note">🔒 Your partner controls clue reveals and rounds</p>
+    <p class="timer-label" id="timer-label">⏱ Next clue in 15s</p>
 
     <div class="guess-box mine" id="my-guess-box">
       <label id="my-guess-label">Your guess</label>
@@ -630,6 +636,8 @@
   const TOTAL_ROUNDS = 25;
   const POINTS_BY_LEVEL = [100, 80, 60, 40, 20];
   const ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const CLUE_INTERVAL_MS = 15000;
+  const GRACE_MS = 12000;
 
   const el = (id) => document.getElementById(id);
 
@@ -647,6 +655,8 @@
   let clueLevel = 0;
   let currentCountry = null;
   let roundActive = false;
+  let roundStartAt = 0;
+  let timerInterval = null;
 
   // ── screens ──
   function showScreen(name) {
@@ -785,9 +795,6 @@
         if (!gameStarted) { gameStarted = true; enterGameScreen(); }
         applyRoundStart(msg, true);
         break;
-      case "clue_reveal":
-        applyClueReveal(msg.clueLevel, true);
-        break;
       case "round_resolved":
         applyRoundResolved(msg.winner, msg.round, msg.clueLevel, true);
         break;
@@ -806,11 +813,6 @@
     el("my-guess-label").textContent = names[myKey] + "'s guess (you)";
     el("guess-form").querySelector("button").style.background = myKey === "p1" ? "var(--p1)" : "var(--p2)";
     el("my-guess-box").classList.add(myKey);
-
-    const isHost = myRole === "host";
-    el("reveal-btn").classList.toggle("hidden", !isHost);
-    el("giveup-btn").classList.toggle("hidden", true);
-    el("host-note").classList.toggle("hidden", isHost);
   }
 
   el("name-p1").addEventListener("input", () => { if (myKey === "p1") { names.p1 = el("name-p1").value.trim() || "Player 1"; sendMsg("name_update", { who: "p1", name: names.p1 }); el("my-guess-label").textContent = names.p1 + "'s guess (you)"; } });
@@ -864,11 +866,43 @@
   function setControlsEnabled(guessEnabled) {
     el("guess-input").disabled = !guessEnabled;
     el("guess-form").querySelector("button").disabled = !guessEnabled;
-    const isHost = myRole === "host";
-    el("reveal-btn").disabled = !guessEnabled || clueLevel >= 5;
-    el("reveal-btn").classList.toggle("hidden", !isHost || clueLevel >= 5);
-    el("giveup-btn").classList.toggle("hidden", !isHost || !guessEnabled || clueLevel < 5);
-    el("host-note").classList.toggle("hidden", isHost || !guessEnabled);
+  }
+
+  // ── clue timer: each device reveals clues on its own local clock, driven purely
+  // by elapsed time since the round started — no one player controls the other's view ──
+  function clearClueTimer() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  }
+
+  function scheduleClueTimer() {
+    clearClueTimer();
+    roundStartAt = Date.now();
+    tickClueTimer();
+    timerInterval = setInterval(tickClueTimer, 250);
+  }
+
+  function tickClueTimer() {
+    if (!roundActive) { clearClueTimer(); return; }
+    const elapsed = Date.now() - roundStartAt;
+    const newLevel = Math.min(5, Math.floor(elapsed / CLUE_INTERVAL_MS));
+    if (newLevel > clueLevel) {
+      clueLevel = newLevel;
+      renderClues();
+      updatePointsUI();
+    }
+    const finalDeadline = 5 * CLUE_INTERVAL_MS + GRACE_MS;
+    if (clueLevel >= 5) {
+      const remaining = Math.max(0, Math.ceil((finalDeadline - elapsed) / 1000));
+      el("timer-label").textContent = remaining > 0 ? `⏱ Answer reveals in ${remaining}s` : `⏱ Revealing answer…`;
+      if (elapsed >= finalDeadline) {
+        clearClueTimer();
+        applyRoundResolved(null, round, 5, false);
+      }
+    } else {
+      const nextAt = (clueLevel + 1) * CLUE_INTERVAL_MS;
+      const remaining = Math.max(0, Math.ceil((nextAt - elapsed) / 1000));
+      el("timer-label").textContent = `⏱ Next clue in ${remaining}s`;
+    }
   }
 
   // ── round flow (host drives round_start / clue_reveal / next round; either device can resolve on a correct guess) ──
@@ -896,6 +930,7 @@
     renderClues();
     updatePointsUI();
     setControlsEnabled(true);
+    scheduleClueTimer();
   }
 
   async function startRound() {
@@ -906,28 +941,10 @@
     sendMsg("round_start", data);
   }
 
-  function applyClueReveal(level, fromRemote) {
-    clueLevel = level;
-    renderClues();
-    updatePointsUI();
-    setControlsEnabled(true);
-  }
-
-  el("reveal-btn").addEventListener("click", () => {
-    if (myRole !== "host" || !roundActive || clueLevel >= 5) return;
-    const level = clueLevel + 1;
-    applyClueReveal(level, false);
-    sendMsg("clue_reveal", { clueLevel: level });
-  });
-
-  el("giveup-btn").addEventListener("click", () => {
-    if (myRole !== "host" || !roundActive) return;
-    applyRoundResolved(null, round, clueLevel, false);
-  });
-
   function applyRoundResolved(winner, forRound, atClueLevel, fromRemote) {
     if (forRound !== round || !roundActive) return; // stale/duplicate message, ignore
     roundActive = false;
+    clearClueTimer();
     setControlsEnabled(false);
 
     if (winner) {
@@ -943,6 +960,7 @@
     clueLevel = 5;
     renderClues();
     updatePointsUI();
+    el("timer-label").textContent = "";
 
     if (round >= TOTAL_ROUNDS) {
       if (myRole === "host") {
@@ -1001,6 +1019,7 @@
 
   el("play-again-btn").addEventListener("click", () => {
     if (channel) { sb.removeChannel(channel); channel = null; }
+    clearClueTimer();
     scores = { p1: 0, p2: 0 };
     round = 0;
     clueLevel = 0;
